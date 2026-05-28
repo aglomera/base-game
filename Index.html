@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Depois da distopia - Edição Plataformas</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #050510; font-family: sans-serif; user-select: none; touch-action: manipulation; }
+        #game-container { position: relative; width: 100vw; height: 100vh; }
+        canvas { display: block; }
+        
+        /* Controles */
+        .controls { position: absolute; bottom: 30px; left: 20px; right: 20px; display: flex; justify-content: space-between; pointer-events: none; z-index: 20; }
+        .d-pad, .action-buttons { display: flex; gap: 20px; pointer-events: auto; }
+        .btn { width: 75px; height: 75px; background: rgba(255, 0, 0, 0.1); border: 2px solid #4a0000; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: #ff4d4d; font-size: 30px; box-shadow: 0 0 10px rgba(255, 0, 0, 0.2); transition: background 0.2s, transform 0.1s; }
+        .btn:active { background: rgba(255, 0, 0, 0.3); transform: scale(0.9); }
+        .btn.running { background: rgba(255, 100, 100, 0.4); border-color: #ff0000; box-shadow: 0 0 20px rgba(255, 0, 0, 0.5); }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div class="controls">
+        <div class="d-pad">
+            <div id="btnLeft" class="btn">◀</div>
+            <div id="btnRight" class="btn">▶</div>
+        </div>
+        <div class="action-buttons">
+            <div id="btnJump" class="btn">▲</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- ATIVOS ---
+    const spriteSheet = new Image(); spriteSheet.src = 'robot.png';
+    const cloudImg = new Image();    cloudImg.src = 'nuvem.png';
+    const treeImg = new Image();     treeImg.src = 'arvore.png';
+    const groundImg = new Image();   groundImg.src = 'chao_sombrio.png';
+    const platImg = new Image();     platImg.src = 'plataforma.png';
+
+    // --- CONFIGURAÇÕES ---
+    const gravity = 0.8;
+    const friction = 0.85;
+    let cameraX = 0;
+    const groundHeight = 100;
+
+    // --- CONFIGURAÇÃO DAS PLATAFORMAS ---
+    const platConfig = {
+        spacing: 550,      // Espaço horizontal entre elas
+        width: 180,        // Largura da plataforma
+        height: 25,        // Altura da colisão
+        yOffset: 160,      // Altura em relação ao chão (alcance do pulo)
+        yVariation: 100    // Diferença de altura entre níveis
+    };
+
+    // Gera dados da plataforma baseados no índice i
+    function getPlatformData(i) {
+        const groundY = canvas.height - groundHeight;
+        const x = i * platConfig.spacing;
+        // Alterna entre uma altura baixa e uma mais alta
+        const y = groundY - (i % 2 === 0 ? platConfig.yOffset : platConfig.yOffset + platConfig.yVariation);
+        return { x, y, w: platConfig.width, h: platConfig.height };
+    }
+
+    const env = {
+        clouds: [
+            { x: 100, y: 50,  scale: 0.3, speed: 0.05 },
+            { x: 700, y: 120, scale: 0.25, speed: 0.08 },
+            { x: 1200, y: 80, scale: 0.4,  speed: 0.04 }
+        ],
+        treeLayers: [
+            { spacing: 900, speed: 0.4, scale: 0.7, offset: 0 },
+            { spacing: 1300, speed: 0.65, scale: 1.0, offset: 500 }
+        ]
+    };
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- PLAYER ---
+    const player = {
+        x: 300, y: 0, width: 64, height: 64,
+        velX: 0, velY: 0, 
+        baseSpeed: 6, 
+        runSpeed: 10,
+        jumpForce: 17, // Aumentado levemente para garantir a subida
+        grounded: false, facingLeft: false,
+        isRunning: false,
+        frameX: 0, tickCount: 0, 
+        baseTicksPerFrame: 6,
+        runTicksPerFrame: 3,
+
+        update() {
+            this.velY += gravity;
+            this.x += this.velX;
+            this.y += this.velY;
+            this.velX *= friction;
+
+            let onGround = false;
+
+            // Colisão com o Chão
+            const groundY = canvas.height - groundHeight;
+            if (this.y + this.height > groundY) {
+                this.y = groundY - this.height;
+                this.velY = 0;
+                onGround = true;
+            }
+
+            // Colisão com Plataformas (Lógica Unidirecional)
+            const currentIdx = Math.round(this.x / platConfig.spacing);
+            // Verifica a plataforma atual e as vizinhas para evitar falhas
+            for (let i = currentIdx - 1; i <= currentIdx + 1; i++) {
+                const plat = getPlatformData(i);
+                
+                if (this.velY >= 0 && // Só colide se estiver caindo
+                    this.x + this.width * 0.7 > plat.x && 
+                    this.x + this.width * 0.3 < plat.x + plat.w &&
+                    this.y + this.height >= plat.y && 
+                    this.y + this.height <= plat.y + this.velY + 10) {
+                    
+                    this.y = plat.y - this.height;
+                    this.velY = 0;
+                    onGround = true;
+                }
+            }
+
+            this.grounded = onGround;
+
+            if (Math.abs(this.velX) > 0.5) {
+                this.tickCount++;
+                const currentTicksPerFrame = this.isRunning ? this.runTicksPerFrame : this.baseTicksPerFrame;
+                if (this.tickCount > currentTicksPerFrame) {
+                    this.tickCount = 0;
+                    this.frameX = (this.frameX + 1) % 4;
+                }
+            } else { this.frameX = 0; }
+        },
+
+        draw() {
+            const drawX = this.x - cameraX;
+            ctx.save();
+            if (this.facingLeft) {
+                ctx.translate(drawX + this.width, this.y);
+                ctx.scale(-1, 1);
+            } else {
+                ctx.translate(drawX, this.y);
+            }
+            if (spriteSheet.complete) {
+                const sw = spriteSheet.width / 4;
+                const sh = spriteSheet.height / 3;
+                ctx.drawImage(spriteSheet, this.frameX * sw, 0, sw, sh, 0, 0, this.width, this.height);
+            } else {
+                ctx.fillStyle = this.isRunning ? "#ff4d4d" : "white";
+                ctx.fillRect(0, 0, this.width, this.height);
+            }
+            ctx.restore();
+        }
+    };
+
+    // --- CONTROLES ---
+    const inputs = { left: false, right: false, up: false };
+    let pressTimer = null;
+    const RUN_DELAY = 800;
+
+    function setupControls() {
+        const bind = (id, prop) => {
+            const el = document.getElementById(id);
+            const start = (e) => { 
+                e.preventDefault(); 
+                inputs[prop] = true; 
+                if (prop === 'left' || prop === 'right') {
+                    if (pressTimer) clearTimeout(pressTimer);
+                    pressTimer = setTimeout(() => {
+                        if (inputs[prop]) {
+                            player.isRunning = true;
+                            el.classList.add('running');
+                        }
+                    }, RUN_DELAY);
+                }
+            };
+            const end = () => {
+                inputs[prop] = false;
+                if (prop === 'left' || prop === 'right') {
+                    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+                    player.isRunning = false;
+                    el.classList.remove('running');
+                }
+            };
+            el.addEventListener('touchstart', start);
+            el.addEventListener('touchend', end);
+            el.addEventListener('mousedown', start);
+            el.addEventListener('mouseup', end);
+            el.addEventListener('mouseleave', end);
+        };
+        bind('btnLeft', 'left'); 
+        bind('btnRight', 'right'); 
+        bind('btnJump', 'up');
+    }
+
+    // --- AMBIENTE ---
+    function drawClouds() {
+        ctx.globalAlpha = 0.2;
+        env.clouds.forEach(cloud => {
+            let xPos = (cloud.x - (cameraX * cloud.speed)) % (canvas.width + 400);
+            if (xPos < -200) xPos += (canvas.width + 600);
+            if (cloudImg.complete) {
+                ctx.drawImage(cloudImg, xPos, cloud.y, 250 * cloud.scale, 150 * cloud.scale);
+            }
+        });
+        ctx.globalAlpha = 1.0;
+    }
+
+    function drawTrees() {
+        const groundY = canvas.height - groundHeight;
+        const escalaGlobal = 2.0;
+        ctx.filter = "brightness(15%) grayscale(100%)"; 
+        env.treeLayers.forEach(layer => {
+            if (!treeImg.complete) return;
+            const treeW = (200 * layer.scale) * escalaGlobal;
+            const treeH = treeW * (treeImg.height / treeImg.width);
+            for (let i = -layer.spacing; i < canvas.width + layer.spacing * 2; i += layer.spacing) {
+                let xPos = i - (cameraX * layer.speed % layer.spacing) + layer.offset;
+                ctx.drawImage(treeImg, xPos, groundY - treeH + 15, treeW, treeH);
+            }
+        });
+        ctx.filter = "none";
+    }
+
+    function drawPlatforms() {
+        const startIdx = Math.floor((cameraX - 600) / platConfig.spacing);
+        const endIdx = Math.ceil((cameraX + canvas.width + 600) / platConfig.spacing);
+
+        for (let i = startIdx; i <= endIdx; i++) {
+            const plat = getPlatformData(i);
+            if (platImg.complete) {
+                ctx.drawImage(platImg, plat.x - cameraX, plat.y, plat.w, plat.h);
+            } else {
+                ctx.fillStyle = "#4a0000";
+                ctx.fillRect(plat.x - cameraX, plat.y, plat.w, plat.h);
+            }
+        }
+    }
+
+    function drawGround() {
+        const groundY = canvas.height - groundHeight;
+        const tileSize = 128;
+        if (groundImg.complete) {
+            let offset = -(cameraX % tileSize);
+            for (let x = offset - tileSize; x < canvas.width + tileSize; x += tileSize) {
+                ctx.drawImage(groundImg, x, groundY, tileSize, tileSize);
+            }
+        } else {
+            ctx.fillStyle = '#1a0505';
+            ctx.fillRect(0, groundY, canvas.width, groundHeight);
+            ctx.fillStyle = '#4a0000';
+            ctx.fillRect(0, groundY, canvas.width, 5);
+        }
+    }
+
+    function gameLoop() {
+        const currentSpeed = player.isRunning ? player.runSpeed : player.baseSpeed;
+        if (inputs.left) { player.velX = -currentSpeed; player.facingLeft = true; }
+        if (inputs.right) { player.velX = currentSpeed; player.facingLeft = false; }
+        if (inputs.up && player.grounded) { 
+            player.velY = -player.jumpForce; 
+            player.grounded = false; 
+        }
+        
+        player.update();
+        cameraX = player.x - canvas.width / 2 + player.width / 2;
+
+        const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        gradient.addColorStop(0, "#050510");
+        gradient.addColorStop(0.8, "#2a0505");
+        gradient.addColorStop(1, "#1a0000");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        drawClouds();
+        drawTrees();
+        drawPlatforms();
+        drawGround();
+        player.draw();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    setupControls();
+    gameLoop();
+</script>
+</body> 
+</html>
