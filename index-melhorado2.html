@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Depois da Distopia - Edição Plataformas</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #050510; font-family: sans-serif; user-select: none; touch-action: manipulation; }
+        #game-container { position: relative; width: 100vw; height: 100vh; }
+        canvas { display: block; }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            top: 18px; left: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 30;
+            pointer-events: none;
+        }
+        #hp-label {
+            color: #ff4444;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            text-shadow: 0 0 8px #ff0000aa;
+            margin-bottom: 2px;
+        }
+        #hp-bar-bg {
+            width: 180px;
+            height: 14px;
+            background: rgba(80,0,0,0.5);
+            border: 1px solid #660000;
+            border-radius: 2px;
+            overflow: hidden;
+            box-shadow: 0 0 10px #ff000033, inset 0 0 6px #00000088;
+        }
+        #hp-bar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #8b0000, #ff2222, #ff6666);
+            border-radius: 2px;
+            transition: width 0.2s ease, background 0.3s;
+            box-shadow: 0 0 8px #ff0000aa;
+        }
+        #hp-bar.low {
+            background: linear-gradient(90deg, #1a0000, #aa0000, #ff0000);
+            animation: pulse-bar 0.6s infinite alternate;
+        }
+        @keyframes pulse-bar {
+            from { box-shadow: 0 0 8px #ff0000aa; }
+            to   { box-shadow: 0 0 20px #ff0000ff; }
+        }
+        #hp-text {
+            color: #ff6666;
+            font-size: 10px;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 0 6px #ff000088;
+            letter-spacing: 1px;
+        }
+
+        /* DAMAGE OVERLAY */
+        #damage-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 25;
+            opacity: 0;
+            background: radial-gradient(ellipse at center, transparent 40%, rgba(200,0,0,0.55) 100%);
+            transition: opacity 0.05s;
+        }
+        #damage-overlay.flash {
+            opacity: 1;
+        }
+
+        /* GAME OVER */
+        #game-over {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 50;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+        #game-over.show { display: flex; }
+        #game-over h1 {
+            color: #ff2222;
+            font-size: clamp(36px, 8vw, 72px);
+            font-family: 'Courier New', monospace;
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            text-shadow: 0 0 30px #ff0000, 0 0 60px #ff000077;
+            animation: flicker 1.5s infinite;
+            margin: 0;
+        }
+        #game-over p {
+            color: #994444;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 3px;
+            font-size: clamp(12px, 3vw, 16px);
+            margin: 0;
+        }
+        #btn-restart {
+            margin-top: 10px;
+            padding: 12px 36px;
+            background: transparent;
+            border: 2px solid #ff2222;
+            color: #ff2222;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            cursor: pointer;
+            box-shadow: 0 0 15px #ff000055;
+            transition: all 0.2s;
+        }
+        #btn-restart:hover { background: #ff222222; box-shadow: 0 0 30px #ff0000aa; }
+        @keyframes flicker {
+            0%,100% { opacity: 1; }
+            92%      { opacity: 1; }
+            93%      { opacity: 0.4; }
+            94%      { opacity: 1; }
+            96%      { opacity: 0.6; }
+            97%      { opacity: 1; }
+        }
+
+        /* CONTROLES */
+        .controls { position: absolute; bottom: 30px; left: 20px; right: 20px; display: flex; justify-content: space-between; pointer-events: none; z-index: 20; }
+        .d-pad, .action-buttons { display: flex; gap: 20px; pointer-events: auto; }
+        .btn { width: 75px; height: 75px; background: rgba(255, 0, 0, 0.1); border: 2px solid #4a0000; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: #ff4d4d; font-size: 30px; box-shadow: 0 0 10px rgba(255, 0, 0, 0.2); transition: background 0.2s, transform 0.1s; }
+        .btn:active { background: rgba(255, 0, 0, 0.3); transform: scale(0.9); }
+        .btn.running { background: rgba(255, 100, 100, 0.4); border-color: #ff0000; box-shadow: 0 0 20px rgba(255, 0, 0, 0.5); }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD de vida -->
+    <div id="hud">
+        <div id="hp-label">⬡ INTEGRIDADE</div>
+        <div id="hp-bar-bg"><div id="hp-bar"></div></div>
+        <div id="hp-text">100 / 100</div>
+    </div>
+
+    <!-- Flash de dano nas bordas -->
+    <div id="damage-overlay"></div>
+
+    <!-- Game Over -->
+    <div id="game-over">
+        <h1>Sistema Falhou</h1>
+        <p>Integridade comprometida</p>
+        <button id="btn-restart">↺ Reiniciar</button>
+    </div>
+
+    <div class="controls">
+        <div class="d-pad">
+            <div id="btnLeft"  class="btn">◀</div>
+            <div id="btnRight" class="btn">▶</div>
+        </div>
+        <div class="action-buttons">
+            <div id="btnJump" class="btn">▲</div>
+        </div>
+    </div>
+</div>
+
+<script>
+'use strict';
+
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+
+// ─── ASSETS ────────────────────────────────────────────────────────────────────
+const spriteSheet = new Image(); spriteSheet.src = 'robot.png';
+const cloudImg    = new Image(); cloudImg.src    = 'nuvem.png';
+const treeImg     = new Image(); treeImg.src     = 'arvore.png';
+const groundImg   = new Image(); groundImg.src   = 'chao_sombrio.png';
+const platImg     = new Image(); platImg.src     = 'plataforma.png';
+
+// ─── CONSTANTES ────────────────────────────────────────────────────────────────
+const GRAVITY     = 0.5;
+const FRICTION    = 0.82;
+const TARGET_FPS  = 60;
+const groundHeight = 100;
+
+// ─── HP ────────────────────────────────────────────────────────────────────────
+const HP = {
+    max:            100,
+    current:        100,
+    invincibleTime: 0,      // frames de invencibilidade após dano
+    INVINCIBLE_MAX: 90,     // 1.5 segundos a 60fps
+    screenShake:    0,
+
+    take(dmg) {
+        if (this.invincibleTime > 0 || gameOver) return;
+        this.current = Math.max(0, this.current - dmg);
+        this.invincibleTime  = this.INVINCIBLE_MAX;
+        this.screenShake     = 12;
+        flashDamage();
+        updateHUD();
+        if (this.current <= 0) triggerGameOver();
+    },
+
+    heal(amt) {
+        this.current = Math.min(this.max, this.current + amt);
+        updateHUD();
+    },
+
+    update(dt) {
+        if (this.invincibleTime > 0) this.invincibleTime = Math.max(0, this.invincibleTime - dt);
+        if (this.screenShake   > 0) this.screenShake    = Math.max(0, this.screenShake    - dt);
+    },
+
+    reset() {
+        this.current        = this.max;
+        this.invincibleTime = 0;
+        this.screenShake    = 0;
+        updateHUD();
+    }
+};
+
+function updateHUD() {
+    const pct    = HP.current / HP.max;
+    const bar    = document.getElementById('hp-bar');
+    const txt    = document.getElementById('hp-text');
+    bar.style.width = (pct * 100) + '%';
+    txt.textContent = `${HP.current} / ${HP.max}`;
+    bar.classList.toggle('low', pct <= 0.3);
+}
+
+function flashDamage() {
+    const ov = document.getElementById('damage-overlay');
+    ov.classList.add('flash');
+    setTimeout(() => ov.classList.remove('flash'), 150);
+}
+
+let gameOver = false;
+
+function triggerGameOver() {
+    gameOver = true;
+    document.getElementById('game-over').classList.add('show');
+}
+
+document.getElementById('btn-restart').addEventListener('click', restartGame);
+
+function restartGame() {
+    gameOver = false;
+    document.getElementById('game-over').classList.remove('show');
+    player.x      = 300;
+    player.y      = 0;
+    player.velX   = 0;
+    player.velY   = 0;
+    player.facingLeft = false;
+    player.isRunning  = false;
+    cameraX = 0;
+    HP.reset();
+    obstacles.length = 0;
+    particles.length = 0;
+    lastObstacleX    = 600;
+    obstaclesSeed    = Math.random() * 10000;
+}
+
+// ─── GRADIENTE E OFFSCREEN ────────────────────────────────────────────────────
+let bgGradient    = null;
+let treeOffscreen = null;
+let cameraX       = 0;
+
+function buildGradient() {
+    bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bgGradient.addColorStop(0,   "#050510");
+    bgGradient.addColorStop(0.8, "#2a0505");
+    bgGradient.addColorStop(1,   "#1a0000");
+}
+
+function buildTreeOffscreen() {
+    if (!treeImg.complete || treeImg.naturalWidth === 0) return;
+    const escalaGlobal = 2.0;
+    const maxScale = Math.max(...env.treeLayers.map(l => l.scale));
+    const treeW = (200 * maxScale) * escalaGlobal + 10;
+    const treeH = treeW * (treeImg.height / treeImg.width) + 10;
+    treeOffscreen = document.createElement('canvas');
+    treeOffscreen.width  = Math.ceil(treeW);
+    treeOffscreen.height = Math.ceil(treeH);
+    const offCtx = treeOffscreen.getContext('2d');
+    offCtx.filter = "brightness(15%) grayscale(100%)";
+    offCtx.drawImage(treeImg, 0, 0, treeOffscreen.width, treeOffscreen.height);
+    offCtx.filter = "none";
+}
+treeImg.onload = buildTreeOffscreen;
+
+// ─── PLATAFORMAS ───────────────────────────────────────────────────────────────
+const platConfig = { spacing: 550, width: 180, height: 25, yOffset: 160, yVariation: 100 };
+
+function getPlatformData(i) {
+    const groundY = canvas.height - groundHeight;
+    const x = i * platConfig.spacing;
+    const y = groundY - (i % 2 === 0 ? platConfig.yOffset : platConfig.yOffset + platConfig.yVariation);
+    return { x, y, w: platConfig.width, h: platConfig.height };
+}
+
+const env = {
+    clouds:     [{ x:100,y:50,scale:0.3,speed:0.05},{x:700,y:120,scale:0.25,speed:0.08},{x:1200,y:80,scale:0.4,speed:0.04}],
+    treeLayers: [{ spacing:900,speed:0.4,scale:0.7,offset:0},{spacing:1300,speed:0.65,scale:1.0,offset:500}]
+};
+
+function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    buildGradient();
+    buildTreeOffscreen();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── OBSTÁCULOS ────────────────────────────────────────────────────────────────
+/*
+  Tipos de obstáculo:
+    spike   — espinho no chão, dano ao tocar
+    crusher — bloco que cai e sobe (dano no topo)
+    laser   — raio horizontal pulsante (dano ao atravessar)
+    orb     — esfera flutuante que patrulha (dano ao contato)
+*/
+const obstacles = [];
+let lastObstacleX = 600;
+let obstaclesSeed = Math.random() * 10000;
+
+// pseudo-random determinístico por posição
+function seededRand(x) {
+    const s = Math.sin(x * 127.1 + obstaclesSeed) * 43758.5453;
+    return s - Math.floor(s);
+}
+
+function spawnObstacles() {
+    const spawnAhead = cameraX + canvas.width + 400;
+    while (lastObstacleX < spawnAhead) {
+        lastObstacleX += 320 + seededRand(lastObstacleX) * 280;
+
+        const groundY = canvas.height - groundHeight;
+        const roll    = seededRand(lastObstacleX + 1);
+        const ox      = lastObstacleX;
+
+        if (roll < 0.30) {
+            // SPIKE — espinho triplo no chão
+            obstacles.push({ type:'spike', x:ox, y: groundY - 32, w:48, h:32, dmg:15 });
+
+        } else if (roll < 0.55) {
+            // CRUSHER — bloco que desce periodicamente
+            obstacles.push({
+                type:'crusher', x: ox, baseY: groundY - 260,
+                y: groundY - 260, w:48, h:48,
+                speed: 3 + seededRand(ox+2)*3,
+                state:'wait',   // 'wait' | 'falling' | 'rising'
+                waitTimer: seededRand(ox+3)*120,
+                dmg: 20
+            });
+
+        } else if (roll < 0.75) {
+            // LASER — raio horizontal
+            const laserY = groundY - 80 - seededRand(ox+4)*120;
+            obstacles.push({
+                type:'laser', x: ox - 30, y: laserY,
+                w: 160, h: 12,
+                phase: seededRand(ox+5)*Math.PI*2,
+                period: 120 + seededRand(ox+6)*80,
+                dmg: 10
+            });
+
+        } else {
+            // ORB — esfera patrulheira
+            const orbY = groundY - 100 - seededRand(ox+7)*150;
+            obstacles.push({
+                type:'orb', x: ox, baseX: ox,
+                y: orbY, r: 18,
+                phase: seededRand(ox+8)*Math.PI*2,
+                range: 80 + seededRand(ox+9)*100,
+                speed: 1.5 + seededRand(ox+10)*1.5,
+                dmg: 12
+            });
+        }
+    }
+
+    // Remove obstáculos muito atrás da câmera
+    const cutoff = cameraX - 600;
+    for (let i = obstacles.length-1; i >= 0; i--) {
+        const o = obstacles[i];
+        if ((o.x ?? o.baseX) < cutoff) obstacles.splice(i, 1);
+    }
+}
+
+function updateObstacles(dt) {
+    const groundY = canvas.height - groundHeight;
+
+    obstacles.forEach(o => {
+        if (o.type === 'crusher') {
+            if (o.state === 'wait') {
+                o.waitTimer -= dt;
+                if (o.waitTimer <= 0) { o.state = 'falling'; }
+            } else if (o.state === 'falling') {
+                o.y += o.speed * dt;
+                if (o.y + o.h >= groundY) {
+                    o.y = groundY - o.h;
+                    o.state = 'rising';
+                    spawnParticles(o.x + o.w/2 - cameraX, groundY, '#ff4400', 8);
+                }
+            } else if (o.state === 'rising') {
+                o.y -= (o.speed * 0.6) * dt;
+                if (o.y <= o.baseY) {
+                    o.y = o.baseY;
+                    o.state = 'wait';
+                    o.waitTimer = 80 + Math.random()*80;
+                }
+            }
+        }
+
+        if (o.type === 'orb') {
+            o.phase += (o.speed / 60) * dt;
+            o.x = o.baseX + Math.sin(o.phase) * o.range;
+        }
+    });
+}
+
+function checkObstacleCollisions() {
+    if (HP.invincibleTime > 0) return;
+
+    const px = player.x, py = player.y, pw = player.width, ph = player.height;
+
+    obstacles.forEach(o => {
+        let hit = false;
+
+        if (o.type === 'spike') {
+            hit = px + pw*0.8 > o.x + 4 &&
+                  px + pw*0.2 < o.x + o.w - 4 &&
+                  py + ph     > o.y + 8 &&
+                  py           < o.y + o.h;
+        }
+
+        if (o.type === 'crusher') {
+            hit = px + pw*0.7 > o.x &&
+                  px + pw*0.3 < o.x + o.w &&
+                  py + ph     > o.y &&
+                  py           < o.y + o.h;
+        }
+
+        if (o.type === 'laser') {
+            const active = getLaserActive(o);
+            if (active) {
+                hit = px + pw*0.6 > o.x &&
+                      px + pw*0.4 < o.x + o.w &&
+                      py + ph*0.7 > o.y &&
+                      py + ph*0.3 < o.y + o.h;
+            }
+        }
+
+        if (o.type === 'orb') {
+            const cx = o.x + o.r, cy = o.y + o.r;
+            const dx = (px + pw/2) - cx;
+            const dy = (py + ph/2) - cy;
+            hit = Math.sqrt(dx*dx + dy*dy) < o.r + Math.min(pw,ph)*0.4;
+        }
+
+        if (hit) {
+            HP.take(o.dmg);
+            // knockback
+            const kbDir = player.x < (o.x ?? o.baseX) ? -1 : 1;
+            player.velX += kbDir * -6;
+            player.velY  = -8;
+        }
+    });
+}
+
+function getLaserActive(o) {
+    // Laser fica ativo 60% do período
+    const t = (performance.now() / (1000/60) + o.phase * (o.period/(Math.PI*2))) % o.period;
+    return t < o.period * 0.6;
+}
+
+// ─── PARTÍCULAS ────────────────────────────────────────────────────────────────
+const particles = [];
+
+function spawnParticles(screenX, screenY, color, count) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1 + Math.random() * 3;
+        particles.push({
+            x: screenX + cameraX, y: screenY,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 2,
+            life: 1.0,
+            decay: 0.025 + Math.random()*0.02,
+            r: 2 + Math.random()*3,
+            color
+        });
+    }
+}
+
+function updateParticles(dt) {
+    for (let i = particles.length-1; i >= 0; i--) {
+        const p = particles[i];
+        p.x    += p.vx * dt;
+        p.y    += p.vy * dt;
+        p.vy   += 0.15 * dt;
+        p.life -= p.decay * dt;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles() {
+    particles.forEach(p => {
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle   = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x - cameraX, p.y, p.r, 0, Math.PI*2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+}
+
+// ─── DESENHO DOS OBSTÁCULOS ────────────────────────────────────────────────────
+function drawObstacles() {
+    const now = performance.now() / (1000/60);
+
+    obstacles.forEach(o => {
+        const sx = (o.x ?? o.baseX) - cameraX;
+
+        if (o.type === 'spike') {
+            ctx.fillStyle = '#880000';
+            ctx.shadowColor = '#ff2200';
+            ctx.shadowBlur  = 8;
+            // Três triângulos
+            const tips = [sx+8, sx+24, sx+40];
+            tips.forEach(tx => {
+                ctx.beginPath();
+                ctx.moveTo(tx,       o.y + o.h);
+                ctx.lineTo(tx - 10,  o.y + o.h);
+                ctx.lineTo(tx,       o.y);
+                ctx.closePath();
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+        }
+
+        if (o.type === 'crusher') {
+            const pulse = 0.7 + 0.3 * Math.sin(now * 0.08);
+            ctx.fillStyle   = `rgba(180,0,0,${pulse})`;
+            ctx.shadowColor = '#ff0000';
+            ctx.shadowBlur  = 16;
+            ctx.fillRect(sx, o.y, o.w, o.h);
+            ctx.strokeStyle = '#ff4400';
+            ctx.lineWidth   = 2;
+            ctx.strokeRect(sx, o.y, o.w, o.h);
+            // Seta indicando direção
+            ctx.fillStyle = '#ff8800';
+            ctx.shadowBlur = 0;
+            ctx.font       = 'bold 20px monospace';
+            ctx.textAlign  = 'center';
+            ctx.fillText(o.state === 'rising' ? '↑' : '↓', sx + o.w/2, o.y + o.h/2 + 7);
+            ctx.textAlign  = 'left';
+            ctx.shadowBlur = 0;
+        }
+
+        if (o.type === 'laser') {
+            const active = getLaserActive(o);
+            const lx = sx;
+
+            // Emissores nas pontas
+            const emitW = 10, emitH = 22;
+            ctx.fillStyle   = active ? '#ff2200' : '#440000';
+            ctx.shadowColor = '#ff4400';
+            ctx.shadowBlur  = active ? 14 : 4;
+            ctx.fillRect(lx - emitW,          o.y - emitH/2, emitW, emitH);
+            ctx.fillRect(lx + o.w,             o.y - emitH/2, emitW, emitH);
+
+            if (active) {
+                // Raio principal
+                const intensity = 0.7 + 0.3*Math.sin(now * 0.3);
+                ctx.fillStyle   = `rgba(255,50,0,${intensity})`;
+                ctx.shadowColor = '#ff2200';
+                ctx.shadowBlur  = 20;
+                ctx.fillRect(lx, o.y, o.w, o.h);
+
+                // Linha central brilhante
+                ctx.fillStyle = `rgba(255,200,150,${intensity})`;
+                ctx.fillRect(lx, o.y + o.h*0.35, o.w, o.h*0.3);
+            } else {
+                // Carga se formando
+                const chargeT = (performance.now() / (1000/60) + o.phase * (o.period/(Math.PI*2))) % o.period;
+                const chargeP = Math.max(0, 1 - (o.period - chargeT) / (o.period * 0.4));
+                ctx.fillStyle = `rgba(180,0,0,${chargeP * 0.5})`;
+                ctx.fillRect(lx, o.y, o.w * chargeP, o.h);
+            }
+            ctx.shadowBlur = 0;
+        }
+
+        if (o.type === 'orb') {
+            const ox2 = o.x - cameraX + o.r;
+            const oy2 = o.y + o.r;
+            const pulse = 0.8 + 0.2*Math.sin(now*0.12);
+
+            // Aura externa
+            const grad = ctx.createRadialGradient(ox2, oy2, 0, ox2, oy2, o.r*2);
+            grad.addColorStop(0,   `rgba(255,50,0,${0.15*pulse})`);
+            grad.addColorStop(1,    'transparent');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(ox2, oy2, o.r*2, 0, Math.PI*2); ctx.fill();
+
+            // Esfera
+            const sGrad = ctx.createRadialGradient(ox2-o.r*0.3, oy2-o.r*0.3, o.r*0.1, ox2, oy2, o.r);
+            sGrad.addColorStop(0, '#ff6633');
+            sGrad.addColorStop(0.5,'#cc0000');
+            sGrad.addColorStop(1, '#330000');
+            ctx.fillStyle   = sGrad;
+            ctx.shadowColor = '#ff2200';
+            ctx.shadowBlur  = 18 * pulse;
+            ctx.beginPath(); ctx.arc(ox2, oy2, o.r, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur  = 0;
+        }
+    });
+}
+
+// ─── PLAYER ───────────────────────────────────────────────────────────────────
+const player = {
+    x:300, y:0, width:64, height:64,
+    velX:0, velY:0,
+    baseSpeed:6, runSpeed:10, jumpForce:17,
+    grounded:false, facingLeft:false, isRunning:false,
+    coyoteFrames:0, COYOTE_MAX:8,
+    jumpBufferFrames:0, JUMP_BUFFER_MAX:10,
+    jumpHeld:false, frameX:0, tickCount:0,
+    baseTicksPerFrame:6, runTicksPerFrame:3,
+
+    update(dt) {
+        this.velY += GRAVITY * dt;
+        this.x    += this.velX * dt;
+        this.y    += this.velY * dt;
+        this.velX *= Math.pow(FRICTION, dt);
+
+        let onGround = false;
+        const groundY = canvas.height - groundHeight;
+
+        if (this.y + this.height >= groundY) {
+            this.y = groundY - this.height; this.velY = 0; onGround = true;
+        }
+        if (this.x < 0) { this.x = 0; this.velX = 0; }
+
+        const ci = Math.round(this.x / platConfig.spacing);
+        for (let i = ci-2; i <= ci+2; i++) {
+            if (i < 0) continue;
+            const plat = getPlatformData(i);
+            const prevBottom = this.y + this.height - this.velY * dt;
+            if (this.velY >= 0 &&
+                this.x + this.width*0.7 > plat.x &&
+                this.x + this.width*0.3 < plat.x + plat.w &&
+                this.y + this.height    >= plat.y &&
+                prevBottom               <= plat.y + 2) {
+                this.y = plat.y - this.height; this.velY = 0; onGround = true;
+            }
+        }
+
+        this.coyoteFrames = onGround ? this.COYOTE_MAX : Math.max(0, this.coyoteFrames - dt);
+        this.grounded     = onGround;
+
+        if (this.jumpBufferFrames > 0) this.jumpBufferFrames = Math.max(0, this.jumpBufferFrames - dt);
+        if (this.jumpBufferFrames > 0 && this.coyoteFrames > 0) {
+            this.velY = -this.jumpForce; this.coyoteFrames = 0; this.jumpBufferFrames = 0;
+        }
+
+        // Animação
+        if (Math.abs(this.velX) > 0.5) {
+            this.tickCount++;
+            if (this.tickCount > (this.isRunning ? this.runTicksPerFrame : this.baseTicksPerFrame)) {
+                this.tickCount = 0;
+                this.frameX = (this.frameX + 1) % 4;
+            }
+        } else { this.frameX = 0; }
+    },
+
+    draw() {
+        const drawX = this.x - cameraX;
+
+        // Pisca durante invencibilidade
+        if (HP.invincibleTime > 0 && Math.floor(HP.invincibleTime / 6) % 2 === 0) return;
+
+        ctx.save();
+        if (this.facingLeft) { ctx.translate(drawX + this.width, this.y); ctx.scale(-1,1); }
+        else                 { ctx.translate(drawX, this.y); }
+
+        if (spriteSheet.complete && spriteSheet.naturalWidth > 0) {
+            const sw = spriteSheet.width/4, sh = spriteSheet.height/3;
+            ctx.drawImage(spriteSheet, this.frameX*sw, 0, sw, sh, 0, 0, this.width, this.height);
+        } else {
+            ctx.fillStyle = this.isRunning ? "#ff4d4d" : "white";
+            ctx.fillRect(0, 0, this.width, this.height);
+        }
+        ctx.restore();
+    }
+};
+
+// ─── CONTROLES ────────────────────────────────────────────────────────────────
+const inputs = { left:false, right:false, up:false };
+let   pressTimer = null;
+const RUN_DELAY  = 800;
+
+function setupControls() {
+    const bind = (id, prop) => {
+        const el = document.getElementById(id);
+        const start = (e) => {
+            e.preventDefault();
+            inputs[prop] = true;
+            if ((prop==='left'||prop==='right') && !pressTimer) {
+                pressTimer = setTimeout(() => {
+                    if (inputs[prop]) { player.isRunning=true; el.classList.add('running'); }
+                }, RUN_DELAY);
+            }
+            if (prop==='up' && !player.jumpHeld) {
+                player.jumpBufferFrames = player.JUMP_BUFFER_MAX;
+                player.jumpHeld = true;
+            }
+        };
+        const end = () => {
+            inputs[prop] = false;
+            if (prop==='left'||prop==='right') {
+                if (pressTimer) { clearTimeout(pressTimer); pressTimer=null; }
+                player.isRunning = false; el.classList.remove('running');
+            }
+            if (prop==='up') player.jumpHeld = false;
+        };
+        el.addEventListener('touchstart', start, {passive:false});
+        el.addEventListener('touchend',   end);
+        el.addEventListener('mousedown',  start);
+        el.addEventListener('mouseup',    end);
+        el.addEventListener('mouseleave', end);
+    };
+    bind('btnLeft','left'); bind('btnRight','right'); bind('btnJump','up');
+
+    window.addEventListener('keydown', e => {
+        if (e.key==='ArrowLeft' ||e.key==='a') inputs.left  = true;
+        if (e.key==='ArrowRight'||e.key==='d') inputs.right = true;
+        if ((e.key==='ArrowUp'||e.key==='w'||e.key===' ')&&!player.jumpHeld) {
+            inputs.up=true; player.jumpBufferFrames=player.JUMP_BUFFER_MAX; player.jumpHeld=true;
+        }
+    });
+    window.addEventListener('keyup', e => {
+        if (e.key==='ArrowLeft' ||e.key==='a') { inputs.left =false; player.isRunning=false; }
+        if (e.key==='ArrowRight'||e.key==='d') { inputs.right=false; player.isRunning=false; }
+        if (e.key==='ArrowUp'||e.key==='w'||e.key===' ') { inputs.up=false; player.jumpHeld=false; }
+    });
+}
+
+// ─── AMBIENTE ─────────────────────────────────────────────────────────────────
+function drawClouds() {
+    ctx.globalAlpha = 0.2;
+    env.clouds.forEach(cloud => {
+        let xPos = (cloud.x - (cameraX * cloud.speed)) % (canvas.width + 400);
+        if (xPos < -200) xPos += canvas.width + 600;
+        if (cloudImg.complete && cloudImg.naturalWidth>0)
+            ctx.drawImage(cloudImg, xPos, cloud.y, 250*cloud.scale, 150*cloud.scale);
+    });
+    ctx.globalAlpha = 1.0;
+}
+
+function drawTrees() {
+    if (!treeOffscreen) return;
+    const groundY = canvas.height - groundHeight;
+    env.treeLayers.forEach(layer => {
+        const treeW = (200*layer.scale)*2.0, treeH = treeW*(treeImg.height/treeImg.width);
+        for (let i=-layer.spacing; i<canvas.width+layer.spacing*2; i+=layer.spacing) {
+            const xPos = i-(cameraX*layer.speed%layer.spacing)+layer.offset;
+            ctx.drawImage(treeOffscreen, xPos, groundY-treeH+15, treeW, treeH);
+        }
+    });
+}
+
+function drawPlatforms() {
+    const s = Math.floor((cameraX-600)/platConfig.spacing);
+    const e = Math.ceil ((cameraX+canvas.width+600)/platConfig.spacing);
+    for (let i=Math.max(0,s); i<=e; i++) {
+        const plat = getPlatformData(i);
+        if (platImg.complete && platImg.naturalWidth>0)
+            ctx.drawImage(platImg, plat.x-cameraX, plat.y, plat.w, plat.h);
+        else {
+            ctx.fillStyle='#4a0000';
+            ctx.fillRect(plat.x-cameraX, plat.y, plat.w, plat.h);
+        }
+    }
+}
+
+function drawGround() {
+    const groundY = canvas.height - groundHeight;
+    const tileSize = 128;
+    if (groundImg.complete && groundImg.naturalWidth>0) {
+        const offset = -(cameraX % tileSize);
+        for (let x=offset-tileSize; x<canvas.width+tileSize; x+=tileSize)
+            ctx.drawImage(groundImg, x, groundY, tileSize, tileSize);
+    } else {
+        ctx.fillStyle='#1a0505'; ctx.fillRect(0,groundY,canvas.width,groundHeight);
+        ctx.fillStyle='#4a0000'; ctx.fillRect(0,groundY,canvas.width,5);
+    }
+}
+
+// ─── GAME LOOP ────────────────────────────────────────────────────────────────
+let lastTime = null;
+
+function gameLoop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const dt = Math.min((timestamp - lastTime) / (1000/TARGET_FPS), 3);
+    lastTime = timestamp;
+
+    if (!gameOver) {
+        const currentSpeed = player.isRunning ? player.runSpeed : player.baseSpeed;
+        if (inputs.left)  { player.velX = -currentSpeed; player.facingLeft = true;  }
+        if (inputs.right) { player.velX =  currentSpeed; player.facingLeft = false; }
+
+        player.update(dt);
+        HP.update(dt);
+        spawnObstacles();
+        updateObstacles(dt);
+        updateParticles(dt);
+        checkObstacleCollisions();
+
+        cameraX = Math.max(0, player.x - canvas.width/2 + player.width/2);
+    }
+
+    // Screen shake
+    let shakeX = 0, shakeY = 0;
+    if (HP.screenShake > 0) {
+        const s = HP.screenShake;
+        shakeX = (Math.random()-0.5)*s*1.5;
+        shakeY = (Math.random()-0.5)*s;
+    }
+
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    ctx.fillStyle = bgGradient || '#050510';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    drawClouds();
+    drawTrees();
+    drawPlatforms();
+    drawGround();
+    drawObstacles();
+    drawParticles();
+    player.draw();
+
+    ctx.restore();
+
+    requestAnimationFrame(gameLoop);
+}
+
+setupControls();
+if (treeImg.complete) buildTreeOffscreen();
+updateHUD();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
